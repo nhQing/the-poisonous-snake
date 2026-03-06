@@ -1,0 +1,36 @@
+# Werewolf AI Game - Implementation Walkthrough
+
+I have successfully built the core of the AI-powered Werewolf Game website! The project integrates real-time multiplayer, WebRTC camera capture, and advanced AI features using Claude.
+
+## Changes Made
+
+### 1. Avatar Capture & Lobby
+I created the initial landing page ([src/app/page.tsx](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/app/page.tsx)) and the [CameraCapture](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/components/CameraCapture.tsx#6-83) component. 
+- It asks for Camera & Microphone permissions.
+- It draws the video feed to a visible element but uses a hidden `<canvas>` to capture a high-quality static frame.
+- That image is converted to Base64 and stored temporarily in the browser session, guaranteeing players can show their face without needing a full file upload backend.
+
+### 2. The Game Room & Anonymous Play
+The core game room ([src/app/room/[id]/page.tsx](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/app/room/%5Bid%5D/page.tsx)) was implemented to sync state across users.
+- I set up **Pusher** ([src/lib/pusher.ts](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/lib/pusher.ts) & `src/app/api/pusher/auth`) to handle presence channels. When you join, your avatar and name are broadcasted to everyone else.
+- **Anonymous Board:** While your local view shows "You", the other players are rendered in grayscale and obfuscated to ensure anonymity until they die in the game logic.
+
+### 3. AI Game Master (Vietnamese)
+The AI Game Master relies on the Anthropic Claude-3.5-Sonnet model (`src/app/api/ai/game-master/route.ts`).
+- I wrote a strict system prompt instructing Claude to respond in Vietnamese, act as a spooky game master, and orchestrate phase transitions (Day/Night, Roles).
+- The chat interface in the room UI streams the responses in real-time.
+
+### 4. Real-time Human Detection
+To prevent cheating (multiple people on one screen), I implemented an automated AI vision check (`src/app/api/ai/detect-humans/route.ts`).
+- Every 15 seconds, a new frame is silently taken from your camera feed and sent to Claude Vision.
+- If Claude detects more than 1 person, a red warning banner appears above your screen (`Cảnh báo: Phát hiện X người trên camera của bạn!`).
+
+## Manual Verification Required
+To play the game on your machine, you must configure your API keys.
+
+1. Open `.env.local` inside the project folder.
+2. Fill in the keys:
+   - `ANTHROPIC_API_KEY`: Your Anthropic API key for Claude.
+   - `PUSHER_APP_ID`, `PUSHER_KEY`, `PUSHER_SECRET`: Create a free cluster on [pusher.com](https://pusher.com) and drop the keys here (set the cluster region to `ap1` or similar).
+
+After setting the keys, run `npm run dev` and navigate to `http://localhost:3000`. You can test multiplayer by opening an Incognito window next to your main window.

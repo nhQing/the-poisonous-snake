@@ -1,0 +1,69 @@
+# Implementation Plan: AI Game Master Werewolf Website
+
+This document outlines the architecture and approach for building the Werewolf web application requested, featuring an AI Game Master in Vietnamese, camera/microphone integration, and an anonymous player system.
+
+## Goal Description
+Build a full-stack Next.js web application where players can join a room, use their camera to take an avatar photo, and play the game of Werewolf. The game is orchestrated by an AI Game Master (such as Anthropic's Claude) in Vietnamese. The AI will also periodically analyze the camera feed to detect the number of people in the room to ensure fair play, and players remain anonymous until their in-game death.
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Real-time Multiplayer Backend:** A Werewolf game needs a real-time backend so players in different browsers see state updates simultaneously.
+> *Question for User:* Are we going to use a service like **Supabase**, **Firebase**, or **Socket.io** for real-time multiplayer? If you don't have a preference, I recommend **Supabase** or **Pusher** as they integrate easily with Next.js.
+
+> [!CAUTION]
+> **AI API Key:** Since we need Claude to act as the Game Master and process images (for human detection), we will need an API key (e.g., Anthropic API key). I will set this up via environment variables (`.env.local`). You will need to provide the actual key on your local machine.
+
+## Proposed System Architecture
+
+### 1. Frontend & UI (Next.js + Tailwind CSS)
+- **Theme:** Dark, atmospheric design suitable for Werewolf.
+- **Login/Lobby Screen ([/src/app/page.tsx](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/app/page.tsx)):**
+  - Form to input a display name.
+  - Video stream component using `navigator.mediaDevices.getUserMedia()` to capture a snapshot for the avatar.
+- **Game Room (`/src/app/room/[id]/page.tsx`):**
+  - Displays other (anonymous) players.
+  - Chat window for communicating with the AI Game Master (instructed to respond exclusively in Vietnamese).
+
+### 2. Camera & Microphone Integration
+- React hooks to manage media stream permissions (`useUserMedia`).
+- Capture periodic frames from the video stream using a hidden `<canvas>` element and send them to the backend API as Base64 strings.
+
+### 3. AI Integration (API Routes)
+- **Game Master Logic:**
+  - Route: `/api/ai/game-master`
+  - Maintains game state (Day/Night, Roles, Actions).
+  - Generates narrative text in **Vietnamese**.
+- **Vision / Human Detection:**
+  - Route: `/api/ai/detect-humans`
+  - Sends base64 image captures to Claude 3.5 Sonnet (or equivalent vision model) with a prompt: "Count the number of distinct human faces in this image." Returns the integer count to automatically warn players if multiple people are looking at one screen.
+
+### 4. Game Engine State
+- Roles: Villager, Werewolf, Seer, Guard (configurable).
+- Anonymity System: The state payload sent to clients will mask `playerName` and `avatarUrl` arrays behind generic placeholders until `status === 'dead'`.
+
+## Proposed Changes (Phase 1)
+---
+### Configurations & Environment
+#### [NEW] `.env.example`
+Add required keys for AI provider and real-time database.
+
+### Next.js App Routes
+#### [MODIFY] [src/app/page.tsx](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/app/page.tsx)
+Replace default landing page with Login/Lobby, featuring Camera capture UI.
+#### [NEW] `src/app/api/ai/route.ts`
+Implement Serverless function to call the Claude API for both chatting and image analysis.
+
+### Components
+#### [NEW] `src/components/CameraCapture.tsx`
+Handles requesting camera/mic permissions, streaming video, and taking a snapshot.
+#### [NEW] `src/components/GameBoard.tsx`
+Displays all players (anonymously), dead players, and the Game Master narration log.
+
+## Verification Plan
+### Manual Verification
+1. Run `npm run dev` and navigate to `localhost:3000`.
+2. Allow camera/mic permissions and take a photo.
+3. Open a second window to simulate another player.
+4. Verify the Game Master responds in Vietnamese and correctly interprets actions.
+5. Verify the "Human Detection" feature triggers when a frame is captured.
