@@ -106,15 +106,25 @@ export default function RoomPage() {
     // Init Camera
     const initCamera = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        });
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: true,
+          });
+        } catch (e) {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
-      } catch (e) {
-        console.error("Cant access camera in room", e);
+      } catch (err: any) {
+        console.error("Cant access camera in room", err);
+        alert("Cảnh báo: Không thể bật Camera trong phòng!");
       }
     };
     initCamera();

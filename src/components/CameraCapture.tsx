@@ -14,16 +14,27 @@ export default function CameraCapture({
 
   const startCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
+      let mediaStream: MediaStream;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+      } catch (e: any) {
+        // Fallback to only video if microphone is not found
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
       setStream(mediaStream);
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
-    } catch (err) {
-      console.error("Camera access denied:", err);
+    } catch (err: any) {
+      console.error("Camera access completely denied or not found:", err);
+      alert("Lỗi: Không tìm thấy Camera hoặc bạn chưa cấp quyền truy cập!");
     }
   };
 
