@@ -424,7 +424,7 @@ export default function RoomPage() {
   return (
     <div className="flex h-screen w-full bg-zinc-950 text-slate-100 overflow-hidden font-sans">
       {/* ---------------- LEFT PANEL: Scrollable Video Grid ---------------- */}
-      <div className="w-1/3 flex-shrink-0 flex flex-col border-r border-zinc-800 bg-zinc-900 p-4 gap-4 overflow-y-auto">
+      <div className="w-1/3 shrink-0 flex flex-col border-r border-zinc-800 bg-zinc-900 p-4 gap-4 overflow-y-auto">
         <div className="sticky top-0 bg-zinc-900/90 backdrop-blur-sm z-30 pb-2 mb-2 flex flex-col gap-2">
           <h2 className="text-xl font-bold flex items-center justify-between">
             <span className="text-red-500">Phòng {roomId}</span>
