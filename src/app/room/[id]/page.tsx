@@ -121,6 +121,10 @@ export default function RoomPage() {
         localStreamRef.current
           .getTracks()
           .forEach((track) => pc.addTrack(track, localStreamRef.current!));
+      } else {
+        // If local user has no camera (permission denied/locked), force WebRTC to still RECEIVE remote videos
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
       }
 
       pc.onicecandidate = (event) => {
@@ -166,13 +170,19 @@ export default function RoomPage() {
 
     const checkAndInit = async () => {
       try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error(
+            "Trình duyệt không hỗ trợ Camera (hoặc không ở môi trường HTTPS bảo mật).",
+          );
+        }
         let stream: MediaStream;
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: true,
             audio: true,
           });
-        } catch (e) {
+        } catch (e: any) {
+          console.warn("Lỗi khi lấy cả hình+tiếng, thử chỉ lấy hình...", e);
           stream = await navigator.mediaDevices.getUserMedia({
             video: true,
             audio: false,
@@ -180,9 +190,18 @@ export default function RoomPage() {
         }
         localStreamRef.current = stream;
         if (videoRef.current) videoRef.current.srcObject = stream;
-      } catch (err) {
+      } catch (err: any) {
         console.error("Cant access camera", err);
-        alert("Cảnh báo: Không thể bật Camera trong phòng!");
+        let errorReason = err.message || err.name;
+        if (err.name === "NotReadableError")
+          errorReason = "Camera đang bị ứng dụng hoặc tab khác chiếm dụng.";
+        else if (err.name === "NotAllowedError")
+          errorReason = "Bạn đã từ chối quyền truy cập Camera.";
+        else if (err.name === "NotFoundError")
+          errorReason = "Không tìm thấy thiết bị Camera nào trên máy.";
+        alert(
+          `Cảnh báo: Không thể bật Camera của bạn!\nLý do: ${errorReason}\n(Bạn vẫn có thể nhìn thấy người khác)`,
+        );
       }
 
       const pusher = getPusherClient();
