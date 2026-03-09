@@ -1,0 +1,50 @@
+# WebRTC Camera Connection & Eliminated Player UI
+
+## Summary of Changes
+
+1. **WebRTC Integration**
+   - Transformed [src/app/room/[id]/page.tsx](file:///c:/Users/nguye/Desktop/the-poisonous-snake/src/app/room/%5Bid%5D/page.tsx) into a real-time mesh network using native WebRTC (`RTCPeerConnection`).
+   - Remote camera streams are captured and stored in state.
+
+2. **VideoPlayer Component & Role Hiding**
+   - Created a new [VideoPlayer](file:///C:/Users/nguye/Desktop/the-poisonous-snake/src/components/VideoPlayer.tsx#9-56) component ([src/components/VideoPlayer.tsx](file:///C:/Users/nguye/Desktop/the-poisonous-snake/src/components/VideoPlayer.tsx)) to easily attach and render `MediaStream` objects.
+   - Remote cameras are purposely rendered with hidden roles, displaying generic tags like `Người chơi ??? / [Tên]` instead of any game roles.
+
+3. **Elimination UI Styling**
+   - Developed logic to synchronize an `isEliminated` boolean across the room (`client-player-eliminated`).
+   - If a player is marked as eliminated, their video frame instantly turns grayscale, reduces opacity, and applies a red border with a red box-shadow.
+
+---
+
+# Redesign Layout and AI Game Flow (V2)
+
+## Summary of New Features
+
+1. **Simplified Onboarding**
+   - Removed the avatar capturing requirement from [src/app/page.tsx](file:///C:/Users/nguye/Desktop/the-poisonous-snake/src/app/page.tsx). Now, players only need to enter their name to join a room.
+
+2. **3-Pane Interface Design**
+   - **Left Column:** A vertically scrollable list of all players' camera feeds. Includes your own camera feed with the "Loại Tôi" button for testing elimination.
+   - **Top Right (Bảng điều khiển - Actions):** Hosts the new interaction buttons. Before the game starts, it shows the **Nhấn Sẵn Sàng (Ready)** button. Later, this is where role-specific actions (like voting, killing, protecting) will be placed.
+   - **Bottom Right (Kênh Chat Quản Trò - AI Chat):** The chat interface with the Claude AI Game Master, kept in a consistent place for easy communication.
+
+3. **Automated Game Initialization**
+   - Replaced static initialization with a dynamic state. Players must hit the "Sẵn Sàng" button.
+   - Once the room has **at least 3 players** and **everyone is ready**, the host automatically pings a newly created backend endpoint (`/api/ai/init-game`).
+   - The endpoint sends a prompt containing all the player IDs to **Claude 3.5 Sonnet**, asking it to assign a balanced set of roles (e.g., Sói, Tiên tri, Dân làng) and formulate a starting narrative.
+   - Claude returns a JSON object, and the backend routes this via Pusher to all clients using the new `game-started` event.
+   - Finally, the UI automatically transitions to the active game state, displaying the player's secret role prominently inside the Action panel and echoing the AI's starting message to the chat.
+
+## Verification
+
+### Automated Checks
+- Validated TypeScript definitions and ESLint checks.
+- Build compiled successfully without any blocking errors via `npm run build`.
+
+### Manual Testing Instructions
+- Open the app in **3 separate browser windows/devices** (since the game requires a minimum of 3 players to start).
+- Enter names (e.g., Alice, Bob, Charlie) and allow camera access.
+- In each window, click **"Nhấn Sẵn Sàng"** in the top right pane.
+- Once the 3rd person clicks ready, wait a few seconds.
+- You will see the AI assign different roles to each window, updating the top right panel with the secret role and adding a highly engaging narrative to the chat panel. 
+- You can continue to text the Game Master in the chat pane.
