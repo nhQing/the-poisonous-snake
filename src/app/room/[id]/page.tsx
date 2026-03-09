@@ -1,24 +1,39 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { getPusherClient } from "@/lib/pusher";
-import { Users, AlertTriangle } from "lucide-react";
+import { Users, AlertTriangle, ShieldAlert } from "lucide-react";
+import VideoPlayer from "@/components/VideoPlayer";
 
 interface Player {
   id: string;
   name: string;
   avatarStr: string;
+  isEliminated?: boolean;
 }
+
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  ],
+};
 
 export default function RoomPage() {
   const { id: roomId } = useParams() as { id: string };
   const router = useRouter();
 
   const [players, setPlayers] = useState<Record<string, Player>>({});
+  const [remoteStreams, setRemoteStreams] = useState<
+    Record<string, MediaStream>
+  >({});
+
   const [myInfo, setMyInfo] = useState<{ name: string; avatar: string } | null>(
     null,
   );
+  const [myId, setMyId] = useState<string>("");
+  const [isMeEliminated, setIsMeEliminated] = useState(false);
+
   const [personCount, setPersonCount] = useState<number>(1);
   const [visionWarning, setVisionWarning] = useState("");
 
@@ -37,6 +52,11 @@ export default function RoomPage() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // WebRTC & Pusher refs
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const peersRef = useRef<Record<string, RTCPeerConnection>>({});
+  const channelRef = useRef<any>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +84,6 @@ export default function RoomPage() {
       const decoder = new TextDecoder();
       let assistantMsg = "";
 
-      // Add a placeholder assistant message
       setMessages((prev) => [
         ...prev,
         { id: "ast" + Date.now(), role: "assistant", content: "" },
@@ -87,24 +106,67 @@ export default function RoomPage() {
     }
   };
 
-  const handleInputChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => {
-    setInput(e.target.value);
-  };
+  const createPeerConnection = useCallback(
+    (targetId: string, initiator: boolean, myIdStr: string) => {
+      if (peersRef.current[targetId]) return peersRef.current[targetId];
+
+      const pc = new RTCPeerConnection(ICE_SERVERS);
+      peersRef.current[targetId] = pc;
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => {
+          pc.addTrack(track, localStreamRef.current!);
+        });
+      }
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && channelRef.current) {
+          channelRef.current.trigger("client-webrtc-candidate", {
+            target: targetId,
+            candidate: event.candidate,
+            sender: myIdStr,
+          });
+        }
+      };
+
+      pc.ontrack = (event) => {
+        setRemoteStreams((prev) => ({
+          ...prev,
+          [targetId]: event.streams[0],
+        }));
+      };
+
+      if (initiator) {
+        pc.createOffer()
+          .then((offer) => pc.setLocalDescription(offer))
+          .then(() => {
+            channelRef.current.trigger("client-webrtc-offer", {
+              target: targetId,
+              offer: pc.localDescription,
+              sender: myIdStr,
+              senderProfile: myInfo, // Pass profile with offer incase target joined later
+            });
+          })
+          .catch((e) => console.error("Create offer error", e));
+      }
+
+      return pc;
+    },
+    [myInfo],
+  );
 
   useEffect(() => {
-    // Load local info
     const name = localStorage.getItem("playerName");
     const avatar = localStorage.getItem("playerAvatar");
     if (!name || !avatar) {
       router.push("/");
       return;
     }
-    setMyInfo({ name, avatar });
+    const info = { name, avatar };
+    setMyInfo(info);
 
-    // Init Camera
-    const initCamera = async () => {
+    const checkAndInit = async () => {
+      // 1. Initialise camera
       try {
         let stream: MediaStream;
         try {
@@ -118,50 +180,145 @@ export default function RoomPage() {
             audio: false,
           });
         }
-
+        localStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
-      } catch (err: any) {
-        console.error("Cant access camera in room", err);
+      } catch (err) {
+        console.error("Cant access camera", err);
         alert("Cảnh báo: Không thể bật Camera trong phòng!");
       }
-    };
-    initCamera();
 
-    // Start Real-time connection
-    const pusher = getPusherClient();
-    if (!pusher) return;
+      // 2. Initialise Pusher
+      const pusher = getPusherClient();
+      if (!pusher) return;
 
-    // We use a presence channel for players.
-    const channel = pusher.subscribe(`presence-room-${roomId}`);
+      const channel = pusher.subscribe(`presence-room-${roomId}`);
+      channelRef.current = channel;
 
-    channel.bind("pusher:subscription_succeeded", (members: any) => {
-      console.log("Joined room, existing members:", members.count);
-      // Let's broadcast our real ID out.
-      // In a real app the auth route server would inject user_info into presence.
-      // For MVP we just use client events to share the avatar and name.
-      channel.trigger("client-player-joined", {
-        name,
-        avatarStr: avatar,
-        id: members.myID,
+      channel.bind("pusher:subscription_succeeded", (members: any) => {
+        const id = members.myID;
+        setMyId(id);
+
+        // Broadcast my profile
+        channel.trigger("client-player-joined", {
+          name: info.name,
+          avatarStr: info.avatar,
+          id: id,
+        });
       });
-    });
 
-    channel.bind("client-player-joined", (data: Player) => {
-      setPlayers((prev) => ({ ...prev, [data.id]: data }));
-    });
+      channel.bind("client-player-joined", (data: Player) => {
+        setPlayers((prev) => ({ ...prev, [data.id]: data }));
+        // If I am already here and someone joins, I am the initiator
+        if (
+          (channel as any).members.myID &&
+          data.id !== (channel as any).members.myID
+        ) {
+          createPeerConnection(data.id, true, (channel as any).members.myID);
+        }
+      });
+
+      channel.bind("client-webrtc-offer", async (data: any) => {
+        if (data.target !== (channel as any).members.myID) return;
+
+        if (data.senderProfile) {
+          setPlayers((prev) => ({
+            ...prev,
+            [data.sender]: {
+              id: data.sender,
+              name: data.senderProfile.name,
+              avatarStr: data.senderProfile.avatar,
+            },
+          }));
+        }
+
+        const pc = createPeerConnection(
+          data.sender,
+          false,
+          (channel as any).members.myID,
+        );
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        channel.trigger("client-webrtc-answer", {
+          target: data.sender,
+          answer: pc.localDescription,
+          sender: (channel as any).members.myID,
+        });
+      });
+
+      channel.bind("client-webrtc-answer", async (data: any) => {
+        if (data.target !== (channel as any).members.myID) return;
+        const pc = peersRef.current[data.sender];
+        if (pc && pc.signalingState !== "stable") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        }
+      });
+
+      channel.bind("client-webrtc-candidate", async (data: any) => {
+        if (data.target !== (channel as any).members.myID) return;
+        const pc = peersRef.current[data.sender];
+        if (pc) {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+      });
+
+      // Handle elimination sync
+      channel.bind("client-player-eliminated", (data: any) => {
+        if (data.target === (channel as any).members.myID) {
+          setIsMeEliminated(data.isEliminated);
+        } else {
+          setPlayers((prev) => ({
+            ...prev,
+            [data.target]: {
+              ...prev[data.target],
+              isEliminated: data.isEliminated,
+            },
+          }));
+        }
+      });
+
+      // Member leaving cleanup
+      channel.bind("pusher:member_removed", (member: any) => {
+        setPlayers((prev) => {
+          const newPlayers = { ...prev };
+          delete newPlayers[member.id];
+          return newPlayers;
+        });
+        setRemoteStreams((prev) => {
+          const newStreams = { ...prev };
+          delete newStreams[member.id];
+          return newStreams;
+        });
+        if (peersRef.current[member.id]) {
+          peersRef.current[member.id].close();
+          delete peersRef.current[member.id];
+        }
+      });
+    };
+
+    checkAndInit();
 
     return () => {
-      pusher.unsubscribe(`presence-room-${roomId}`);
-    };
-  }, [roomId, router]);
+      const pusher = getPusherClient();
+      if (pusher) pusher.unsubscribe(`presence-room-${roomId}`);
 
-  // Periodic check for human count
+      // Cleanup WebRTC connections
+      Object.values(peersRef.current).forEach((pc) => pc.close());
+      peersRef.current = {};
+
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [roomId, router, createPeerConnection]);
+
+  // Periodic Vision check
   useEffect(() => {
     const interval = setInterval(async () => {
       if (!videoRef.current || !canvasRef.current) return;
-
       const ctx = canvasRef.current.getContext("2d");
       if (!ctx) return;
 
@@ -192,14 +349,22 @@ export default function RoomPage() {
       } catch (err) {
         console.error("Vision check failed", err);
       }
-    }, 15000); // Check every 15 seconds
+    }, 15000);
 
     return () => clearInterval(interval);
   }, []);
 
+  const toggleMeEliminate = () => {
+    const newVal = !isMeEliminated;
+    setIsMeEliminated(newVal);
+    channelRef.current?.trigger("client-player-eliminated", {
+      target: myId,
+      isEliminated: newVal,
+    });
+  };
+
   return (
     <div className="flex h-screen bg-zinc-950 text-slate-100 overflow-hidden font-sans">
-      {/* LEFT PANEL: Players and Video */}
       <div className="w-1/3 flex flex-col border-r border-zinc-800 bg-zinc-900 p-4 gap-4">
         <h2 className="text-xl font-bold flex items-center justify-between">
           <span className="text-red-500">Phòng {roomId}</span>
@@ -215,41 +380,53 @@ export default function RoomPage() {
           </div>
         )}
 
-        {/* My Video Feed */}
-        <div className="relative rounded-xl overflow-hidden bg-black aspect-video border-2 border-slate-700">
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 text-xs rounded">
-            Bạn ({myInfo?.name})
+        {/* Local Player */}
+        <div className="flex flex-col gap-1">
+          <div
+            className={`relative rounded-xl overflow-hidden bg-black aspect-video transition-all duration-300 ${isMeEliminated ? "border-4 border-red-600 shadow-[0_0_15px_rgba(239,68,68,0.8)]" : "border-2 border-slate-700"}`}
+          >
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`w-full h-full object-cover ${isMeEliminated ? "grayscale opacity-50" : ""}`}
+            />
+            <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-1 text-xs rounded z-10 text-white flex gap-2 items-center">
+              Bạn ({myInfo?.name})
+              {isMeEliminated && (
+                <span className="text-[10px] text-red-500 font-bold uppercase">
+                  Bị loại
+                </span>
+              )}
+            </div>
+            {isMeEliminated && (
+              <div className="absolute inset-0 bg-red-900/20 pointer-events-none z-20"></div>
+            )}
+
+            {/* Dev toggle */}
+            <button
+              onClick={toggleMeEliminate}
+              className="absolute top-2 right-2 bg-red-600/80 hover:bg-red-600 text-[10px] px-2 py-1 rounded z-30"
+            >
+              {isMeEliminated ? "Đã loại" : "Loại Tôi"}
+            </button>
           </div>
         </div>
 
-        {/* Other Players (Anonymous Mode toggleable logic goes here) */}
+        {/* Remote Players */}
         <div className="flex-1 overflow-y-auto mt-4 px-1">
           <h3 className="text-sm font-semibold text-zinc-400 mb-3 uppercase tracking-wider">
             Người chơi (#Ẩn danh)
           </h3>
           <div className="grid grid-cols-2 gap-3">
             {Object.values(players).map((p) => (
-              <div
+              <VideoPlayer
                 key={p.id}
-                className="bg-zinc-800 rounded-lg p-2 flex flex-col items-center gap-2 border border-zinc-700"
-              >
-                <div className="w-16 h-16 rounded-full overflow-hidden bg-zinc-900">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={p.avatarStr}
-                    alt="Avatar"
-                    className="w-full h-full object-cover grayscale opacity-50 blur-[2px]"
-                  />
-                </div>
-                <span className="text-xs text-zinc-300">Người chơi ???</span>
-              </div>
+                stream={remoteStreams[p.id]}
+                name={`Người chơi ??? / ${p.name}`}
+                isEliminated={p.isEliminated}
+              />
             ))}
           </div>
         </div>
@@ -257,7 +434,6 @@ export default function RoomPage() {
         <canvas ref={canvasRef} className="hidden" />
       </div>
 
-      {/* RIGHT PANEL: Game Master Chat */}
       <div className="flex-1 flex flex-col bg-zinc-950">
         <div className="p-4 border-b border-zinc-800 bg-zinc-900 shadow-sm">
           <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
